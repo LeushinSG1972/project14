@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Function Visualizer with Animation</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            font-family: Arial, sans-serif;
+        }
+        #container { 
+            position: absolute; 
+            width: 100%; 
+            height: 100%; 
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+            max-width: 400px;
+            transition: all 0.3s ease;
+        }
+        #controls.collapsed {
+            height: 30px;
+            overflow: hidden;
+        }
+        #function-input {
+            width: 300px;
+            padding: 5px;
+            margin-bottom: 5px;
+        }
+        #plot-button, #toggle-controls, #random-texture-btn {
+            padding: 5px 10px;
+            margin-left: 5px;
+            margin-bottom: 5px;
+        }
+        #error {
+            color: red;
+            margin-top: 5px;
+        }
+        .control-group {
+            margin-top: 10px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        #animation-controls {
+            margin-top: 10px;
+            border-top: 1px solid #ccc;
+            padding-top: 10px;
+        }
+        #toggle-controls {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            padding: 2px 5px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="controls">
+        <button id="toggle-controls">Hide Controls</button>
+        <label for="function-input">Enter z = f(x,y,t):</label>
+        <input type="text" id="function-input" value="Math.sin(x + t) * Math.cos(y - t)" placeholder="e.g., Math.sin(x + t) * Math.cos(y - t)">
+        <button id="plot-button">Plot</button>
+        <button id="random-texture-btn">Random Texture</button>
+        <div id="error"></div>
+        
+        <div id="animation-controls" class="control-group">
+            <label>Animation Controls:</label>
+            <button id="play-pause-button">Pause</button>
+            <button id="reset-button">Reset</button>
+            <div>
+                <label for="speed-slider">Speed: </label>
+                <input type="range" id="speed-slider" min="0.1" max="5" step="0.1" value="1">
+                <span id="speed-value">1.0</span>
+            </div>
+            <div>
+                <label for="t-value">t = </label>
+                <span id="t-value">0.00</span> (0 to 2π)
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf0f0f0);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5;
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('container').appendChild(renderer.domElement);
+        
+        // Controls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(1, 1, 1);
+        scene.add(directionalLight);
+        
+        // Axes helper
+        const axesHelper = new THREE.AxesHelper(2);
+        scene.add(axesHelper);
+        
+        // Grid helper
+        const gridHelper = new THREE.GridHelper(4, 20);
+        scene.add(gridHelper);
+        
+        // Surface variables
+        let surface = null;
+        const size = 3;
+        const divisions = 50;
+        let currentMaterial = null;
+        
+        // Animation variables
+        let t = 0;
+        let animationSpeed = 1;
+        let isPlaying = true;
+        
+        // Function to generate procedural texture
+        function generateProceduralTexture() {
+            const canvas = document.createElement('canvas');
+            const size = 256;
+            canvas.width = size;
+            canvas.height = size;
+            
+            const context = canvas.getContext('2d');
+            const imageData = context.createImageData(size, size);
+            
+            // Generate random noise
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                // Random color components
+                const r = Math.floor(Math.random() * 156) + 100; // 100-255
+                const g = Math.floor(Math.random() * 156) + 100;
+                const b = Math.floor(Math.random() * 156) + 100;
+                
+                // Add some patterns
+                const x = (i / 4) % size;
+                const y = Math.floor((i / 4) / size);
+                
+                // Create some organic patterns
+                const pattern1 = Math.sin(x * 0.1) * Math.cos(y * 0.1) * 127 + 128;
+                const pattern2 = Math.sin(Math.sqrt(x*x + y*y) * 0.2) * 127 + 128;
+                
+                imageData.data[i] = (r + pattern1) / 2;
+                imageData.data[i + 1] = (g + pattern2) / 2;
+                imageData.data[i + 2] = (b + (pattern1 + pattern2) / 2) / 2;
+                imageData.data[i + 3] = 255;
+            }
+            
+            context.putImageData(imageData, 0, 0);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(2, 2);
+            
+            return texture;
+        }
+        
+        // Function to create material with optional texture
+        function createMaterial(withTexture = false) {
+            const params = {
+                side: THREE.DoubleSide,
+                flatShading: true,
+                wireframe: false,
+                transparent: true,
+                opacity: 0.9
+            };
+            
+            if (withTexture) {
+                params.map = generateProceduralTexture();
+                params.color = new THREE.Color(0xffffff);
+            } else {
+                params.color = new THREE.Color(0x2194ce);
+            }
+            
+            return new THREE.MeshPhongMaterial(params);
+        }
+        
+        // Function to create surface
+        function createSurface(funcStr, withTexture = false) {
+            // Remove any existing surface
+            if (surface) {
+                scene.remove(surface);
+            }
+            
+            // Parse the function
+            let func;
+            try {
+                func = new Function('x', 'y', 't', 'return ' + funcStr + ';');
+                // Test the function
+                func(0, 0, 0);
+            } catch (e) {
+                document.getElementById('error').textContent = 'Error in function: ' + e.message;
+                return;
+            }
+            document.getElementById('error').textContent = '';
+            
+            // Create geometry
+            const geometry = new THREE.ParametricBufferGeometry((u, v, target) => {
+                const x = (u - 0.5) * 2 * size;
+                const y = (v - 0.5) * 2 * size;
+                let z;
+                
+                try {
+                    z = func(x, y, t);
+                    // Handle non-finite numbers
+                    if (!isFinite(z)) z = 0;
+                } catch (e) {
+                    z = 0;
+                }
+                
+                target.set(x, y, z);
+            }, divisions, divisions);
+            
+            // Create material
+            currentMaterial = createMaterial(withTexture);
+            
+            // Create mesh
+            surface = new THREE.Mesh(geometry, currentMaterial);
+            scene.add(surface);
+        }
+        
+        // Update surface with current t value
+        function updateSurface() {
+            if (!surface) return;
+            
+            const funcStr = document.getElementById('function-input').value;
+            let func;
+            try {
+                func = new Function('x', 'y', 't', 'return ' + funcStr + ';');
+            } catch (e) {
+                return;
+            }
+            
+            const positions = surface.geometry.attributes.position;
+            
+            for (let i = 0; i < positions.count; i++) {
+                const u = (i % (divisions + 1)) / divisions;
+                const v = Math.floor(i / (divisions + 1)) / divisions;
+                
+                const x = (u - 0.5) * 2 * size;
+                const y = (v - 0.5) * 2 * size;
+                let z;
+                
+                try {
+                    z = func(x, y, t);
+                    if (!isFinite(z)) z = 0;
+                } catch (e) {
+                    z = 0;
+                }
+                
+                positions.setZ(i, z);
+            }
+            
+            positions.needsUpdate = true;
+            surface.geometry.computeVertexNormals();
+        }
+        
+        // Initial plot
+        createSurface(document.getElementById('function-input').value);
+        
+        // Event listeners
+        document.getElementById('plot-button').addEventListener('click', () => {
+            const funcStr = document.getElementById('function-input').value;
+            createSurface(funcStr, currentMaterial.map !== null);
+        });
+        
+        document.getElementById('function-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const funcStr = document.getElementById('function-input').value;
+                createSurface(funcStr, currentMaterial.map !== null);
+            }
+        });
+        
+        // Toggle controls visibility
+        document.getElementById('toggle-controls').addEventListener('click', () => {
+            const controls = document.getElementById('controls');
+            controls.classList.toggle('collapsed');
+            document.getElementById('toggle-controls').textContent = 
+                controls.classList.contains('collapsed') ? 'Show Controls' : 'Hide Controls';
+        });
+        
+        // Random texture button
+        document.getElementById('random-texture-btn').addEventListener('click', () => {
+            if (surface) {
+                currentMaterial = createMaterial(true);
+                surface.material = currentMaterial;
+            }
+        });
+        
+        // Animation controls
+        document.getElementById('play-pause-button').addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            document.getElementById('play-pause-button').textContent = isPlaying ? 'Pause' : 'Play';
+        });
+        
+        document.getElementById('reset-button').addEventListener('click', () => {
+            t = 0;
+            updateSurface();
+            updateTValueDisplay();
+        });
+        
+        document.getElementById('speed-slider').addEventListener('input', (e) => {
+            animationSpeed = parseFloat(e.target.value);
+            document.getElementById('speed-value').textContent = animationSpeed.toFixed(1);
+        });
+        
+        // Update t value display
+        function updateTValueDisplay() {
+            document.getElementById('t-value').textContent = t.toFixed(2);
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (isPlaying) {
+                t += 0.01 * animationSpeed;
+                if (t > 2 * Math.PI) {
+                    t = 0;
+                }
+                updateSurface();
+                updateTValueDisplay();
+            }
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        animate();
+    </script>
+</body>
+</html>
